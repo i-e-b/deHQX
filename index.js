@@ -1,5 +1,5 @@
 
-var _keyStr = "!\"#$%&'()*+,-012345689@ABCDEFGHIJKLMNPQRSTUVXYZ[`abcdefhijklmpqr?";
+var keyStr = "!\"#$%&'()*+,-012345689@ABCDEFGHIJKLMNPQRSTUVXYZ[`abcdefhijklmpqr";
 var rleMark = 144;
 
 // decode the ASCII chars into an int array
@@ -12,23 +12,18 @@ function coreDecode (input) {
     input = input.replace(/[\r\n \t]/g, "");
 
     while (i < input.length) {
-        enc1 = _keyStr.indexOf(input.charAt(i++));
-        enc2 = _keyStr.indexOf(input.charAt(i++));
-        enc3 = _keyStr.indexOf(input.charAt(i++));
-        enc4 = _keyStr.indexOf(input.charAt(i++));
+        enc1 = keyStr.indexOf(input.charAt(i++));
+        enc2 = keyStr.indexOf(input.charAt(i++));
+        enc3 = keyStr.indexOf(input.charAt(i++));
+        enc4 = keyStr.indexOf(input.charAt(i++));
 
         chr1 = (enc1 << 2) | (enc2 >> 4);
         chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
         chr3 = ((enc3 & 3) << 6) | enc4;
 
         output.push(chr1);
-
-        if (enc3 != 64) {
-            output.push(chr2);
-        }
-        if (enc4 != 64) {
-            output.push(chr3);
-        }
+        output.push(chr2);
+        output.push(chr3);
     }
     return output;
 }
@@ -59,6 +54,73 @@ function expandRLE(input) {
     return [].concat.apply([], input); // flatten
 }
 
+function stringOf(intArray, start, length) {
+    return String.fromCharCode.apply([], intArray.slice(start, (start+length)));
+}
+
+function bufferFrom(intArray, start, length) {
+    return new Buffer(intArray.slice(start, (start+length)));
+}
+
+function getLong(arr, start) {
+    return (arr[start] << 24) + (arr[start+1] << 16) + (arr[start+2] << 8) + (arr[start+3]);
+}
+function getWord(arr, start) {
+    return (arr[start] << 8) + (arr[start+1]);
+}
+
+
+// interpret the decoded bytes into a structure
+function structure (raw) {
+    /*
+
+    the decoded data between the first and last colon (:) looks like:
+
+    1       n       4    4    2    4    4   2   (length)
+    +-+---------+-+----+----+----+----+----+--+
+    |n| name... |0|TYPE|AUTH|FLAG|DLEN|RLEN|HC| (contents)
+    +-+---------+-+----+----+----+----+----+--+
+
+            DLEN                2    (length)
+    +--------------------------+--+
+    |   DATA FORK              |DC| (contents)
+    +--------------------------+--+
+
+            RLEN                    2   (length)
+    +------------------------------+--+
+    |    RESOURCE FORK             |RC| (contents)
+    +------------------------------+--+
+*/
+    var nlen = raw[0]; // name length
+    var typeOffs = nlen + 2;
+    var ctorOffs = nlen + 6;
+    var dlen = getLong(raw, nlen + 12);
+    var rlen = getLong(raw, nlen + 16);
+    var doffs = nlen+22;
+    var roffs = doffs + dlen + 2;
+
+    var hcrc = getWord(raw, nlen + 20);
+    var dcrc = getWord(raw, doffs + dlen);
+    var rcrc = getWord(raw, roffs + rlen);
+
+    var expected = 26 + nlen + dlen + rlen;
+    var spareBytes = raw.length - expected;
+
+    return {
+        name : stringOf(raw, 1, nlen),
+        type : stringOf(raw, typeOffs, 4),
+        creator : stringOf(raw, ctorOffs, 4),
+        headCRC : hcrc,
+        dataCRC : dcrc,
+        resourceCRC : rcrc,
+        data_length : dlen,
+        resoure_length : rlen,
+        spareBytes : spareBytes,
+        dataBuffer: bufferFrom(raw, doffs, dlen),
+        rsrcBuffer: bufferFrom(raw, roffs, rlen)
+    };
+}
+
 var smalltest =
 "$f*TEQKPH#jdCA0d,R0TG!\"6594%8dP8)3#3\"!&m!*!%EMa6593K!!%!!!&mFNa"+
 "KG3,r!*!$&[rr$3d,BQPZD'9i,R4PFh3!RQ+!!\"AV#J#3!i!!N!@QKUjrU!#3'[q"+
@@ -70,5 +132,5 @@ var smalltest =
 "$$L#I1aM-\"VjqV-q$34KQq6$M$f8#,Zc,i),!(`*ZN!$K$rS!LA%3cL+dYi\"@,K("+
 "Z\"`#3!fKi!!!";
 
-console.log(JSON.stringify(expandRLE([0x05,0x90,0x05,0x90,0x00,0x90,0x05]))); // 5x5, 5x144
-console.log(JSON.stringify(expandRLE(coreDecode(smalltest))));
+//console.log(JSON.stringify(expandRLE([0x05,0x90,0x05,0x90,0x00,0x90,0x05]))); // 5x5, 5x144
+console.log(JSON.stringify(structure(expandRLE(coreDecode(smalltest))), null, 2));
