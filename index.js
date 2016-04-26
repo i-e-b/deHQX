@@ -1,3 +1,4 @@
+var fs = require('fs');
 
 var keyStr = "!\"#$%&'()*+,-012345689@ABCDEFGHIJKLMNPQRSTUVXYZ[`abcdefhijklmpqr";
 var rleMark = 144;
@@ -28,6 +29,16 @@ function coreDecode (input) {
     return output;
 }
 
+function flatten(input) {
+    var flattened=[];
+    for (var i=0; i<input.length; ++i) {
+        var current = input[i];
+        for (var j=0; j<current.length; ++j)
+            flattened.push(current[j]);
+    }
+    return flattened;
+}
+
 // expand run length encoding. Mutates input.
 function expandRLE(input) {
     //  The character to be repeated is followed by a 0x90 byte then the repeat count.
@@ -51,7 +62,7 @@ function expandRLE(input) {
         }
     }
 
-    return [].concat.apply([], input); // flatten
+    return flatten(input);
 }
 
 function stringOf(intArray, start, length) {
@@ -106,6 +117,8 @@ function structure (raw) {
     var expected = 26 + nlen + dlen + rlen;
     var spareBytes = raw.length - expected;
 
+    if (raw[nlen+1] !== 0) { throw new Error("malformed file -- no name terminator"); }
+
     return {
         name : stringOf(raw, 1, nlen),
         type : stringOf(raw, typeOffs, 4),
@@ -115,22 +128,37 @@ function structure (raw) {
         resourceCRC : rcrc,
         data_length : dlen,
         resoure_length : rlen,
+        expectedBytes:expected,
+        actualBytes:raw.length,
         spareBytes : spareBytes,
         dataBuffer: bufferFrom(raw, doffs, dlen),
         rsrcBuffer: bufferFrom(raw, roffs, rlen)
     };
 }
 
-var smalltest =
-"$f*TEQKPH#jdCA0d,R0TG!\"6594%8dP8)3#3\"!&m!*!%EMa6593K!!%!!!&mFNa"+
-"KG3,r!*!$&[rr$3d,BQPZD'9i,R4PFh3!RQ+!!\"AV#J#3!i!!N!@QKUjrU!#3'[q"+
-"3\"&4&@&483N)f!3#Xaj6bV-H8mJ!!!B3!N!0\"!*!$[3#3!cR@iiY)!*!'[I%4!!J"+
-"Fp$X%X3@J!mZE6!GRiKUi$HGKMf0U61S46%i1\"AB!TI,fLl!d1X3RDDE8ALfTCbM"+
-"8UP9p4iUqY-0k4krHpk9XK@`rbj2Ti'U@5rGH@+[fr-i4T6-qXpfl26,k!H5$Nml"+
-"TIkI'(l3GI4)f8mII&01CNEbC2LrNLBeaZ1HG@$G8!Z6\"k)hh,q9p\"r6FC*!!Se\""+
-"(ic,Pd(4(b`pflKC`H1&JN5)GVX3mREdH55[l`%`Yhp%q092c`A(hPV)!83Dr&f4"+
-"$$L#I1aM-\"VjqV-q$34KQq6$M$f8#,Zc,i),!(`*ZN!$K$rS!LA%3cL+dYi\"@,K("+
-"Z\"`#3!fKi!!!";
+function readBinHexFile(path) {
+    // this does all the transform is memory, which will limit file size.
+    // should not be a problem with historic files.
+    var input = fs.readFileSync(path, "ascii");
+    var marker = "(This file must be converted with BinHex 4.0)";
+    var startPoint = input.indexOf(marker);
+    if (startPoint < 0) { throw new Error("invalid file -- no binhex marker found"); }
+    startPoint = input.indexOf(':', startPoint + marker.length-1) +1;
+    var endPoint = input.indexOf(':', startPoint)-1;
+    return input.slice(startPoint, endPoint);
+}
 
 //console.log(JSON.stringify(expandRLE([0x05,0x90,0x05,0x90,0x00,0x90,0x05]))); // 5x5, 5x144
-console.log(JSON.stringify(structure(expandRLE(coreDecode(smalltest))), null, 2));
+var binhex = readBinHexFile("./sample-data/tetrismax2.6.sit.hqx");
+//console.log(binhex);
+
+// it seems that some hqx files don't use the RLE encoding?
+var result = structure(coreDecode(binhex));//structure(expandRLE(coreDecode(binhex)));
+fs.writeFileSync("./sample-data/"+result.name, result.dataBuffer);
+fs.writeFileSync("./sample-data/"+result.name+".rsrc", result.rsrcBuffer);
+
+result.dataBuffer = "written to disk";
+result.rsrcBuffer = "written to disk";
+console.log(JSON.stringify(result));//, null, 2));
+
+
